@@ -1,6 +1,6 @@
 # Local RH Agent
 
-A trading agent that runs on this Mac:
+A trading agent that runs locally.
 
 - **LLM:** Ollama, default `qwen2.5:3b` (already pulled here; it returns tool calls)
 - **Broker:** Robinhood Trading MCP at `https://agent.robinhood.com/mcp/trading`
