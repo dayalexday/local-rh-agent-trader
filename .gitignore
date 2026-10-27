@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.tokens/
+*.log
+sp500.csv
+runs/*
+!runs/.gitkeep
+*.egg-info/
+.pytest_cache/
