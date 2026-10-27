@@ -1,6 +1,7 @@
 from local_rh_agent.agent import (
     extract_agentic_accounts,
     extract_tool_calls,
+    filter_tool_arguments,
     order_guard,
     parse_text_tool_calls,
     stable_ref_id,
@@ -57,3 +58,16 @@ def test_ref_id_is_stable_per_symbol_side_day():
     first = stable_ref_id("AAPL", "buy", "2026-11-02")
     assert first == stable_ref_id("aapl", "BUY", "2026-11-02")
     assert first != stable_ref_id("AAPL", "sell", "2026-11-02")
+
+
+def test_filter_drops_invented_properties():
+    schema = {
+        "type": "object",
+        "properties": {"account_number": {"type": "string"}},
+        "additionalProperties": False,
+    }
+    cleaned = filter_tool_arguments(
+        {"account_number": "9548", "data": {"format": "json"}},
+        schema,
+    )
+    assert cleaned == {"account_number": "9548"}

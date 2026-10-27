@@ -33,7 +33,9 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 # return tokens from it here. Switch OLLAMA_MODEL if you want to try it.
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.2"))
-OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "16384"))
+# 8GB Macs swap hard at 16k with a big tool list. 8k is enough for the short run set.
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+OLLAMA_TIMEOUT_S = float(os.getenv("OLLAMA_TIMEOUT_S", "180"))
 RH_MCP_URL = os.getenv("RH_MCP_URL", "https://agent.robinhood.com/mcp/trading")
 DRY_RUN = os.getenv("DRY_RUN", "1").strip() in {"1", "true", "True", "yes"}
 MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "120"))

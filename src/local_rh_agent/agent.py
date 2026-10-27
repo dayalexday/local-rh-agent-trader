@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import date
@@ -11,7 +12,7 @@ from typing import Any
 import httpx
 
 from . import config
-from .mcp_client import RobinhoodMcp, tool_result_text
+from .mcp_client import McpError, RobinhoodMcp, tool_result_text
 
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -150,6 +151,19 @@ def _coerce_order_args(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
+def filter_tool_arguments(
+    arguments: dict[str, Any],
+    schema: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Drop invented keys. Small models often add junk like `data` or `format`."""
+    if not isinstance(arguments, dict):
+        return {}
+    if not schema or not isinstance(schema.get("properties"), dict):
+        return dict(arguments)
+    allowed = set(schema["properties"])
+    return {key: value for key, value in arguments.items() if key in allowed}
+
+
 def _shrink(value: Any, limit: int = 280) -> Any:
     """Keep field names, shorten the prose. A 3B context fills up fast."""
     if isinstance(value, dict):
@@ -227,26 +241,50 @@ def check_ollama() -> tuple[bool, str]:
     )
 
 
-def _chat(messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
+def _chat(messages: list[dict[str, Any]], tools: list[dict[str, Any]], *, round_index: int) -> dict[str, Any]:
     payload = {
         "model": config.OLLAMA_MODEL,
         "messages": messages,
         "tools": tools,
         "stream": False,
         "think": False,
-        "keep_alive": "30m",
+        "keep_alive": "10m",
         "options": {
             "temperature": config.OLLAMA_TEMPERATURE,
             "num_ctx": config.OLLAMA_NUM_CTX,
         },
     }
-    response = httpx.post(f"{config.OLLAMA_HOST}/api/chat", json=payload, timeout=600)
+    print(
+        f"[ollama] round {round_index}: waiting on {config.OLLAMA_MODEL} "
+        f"(ctx={config.OLLAMA_NUM_CTX}, tools={len(tools)})…",
+        flush=True,
+    )
+    started = time.monotonic()
+    try:
+        response = httpx.post(
+            f"{config.OLLAMA_HOST}/api/chat",
+            json=payload,
+            timeout=config.OLLAMA_TIMEOUT_S,
+        )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(
+            f"Ollama timed out after {config.OLLAMA_TIMEOUT_S:.0f}s. "
+            "On an 8GB Mac that usually means the prompt is too big or the machine is swapping. "
+            "Ctrl-C is fine; try again, or lower OLLAMA_NUM_CTX in .env."
+        ) from exc
+    elapsed = time.monotonic() - started
     if response.status_code >= 400:
         raise RuntimeError(f"Ollama HTTP {response.status_code}: {response.text[:800]}")
     body = response.json()
     message = body.get("message")
     if not isinstance(message, dict):
         raise RuntimeError(f"Ollama reply missing message: {str(body)[:500]}")
+    calls = extract_tool_calls(message)
+    if calls:
+        names = ", ".join(name for name, _ in calls)
+        print(f"[ollama] replied in {elapsed:.1f}s → tool(s): {names}", flush=True)
+    else:
+        print(f"[ollama] replied in {elapsed:.1f}s → final text", flush=True)
     return message
 
 
@@ -271,6 +309,7 @@ class Agent:
         self.enable_report = enable_report
         self.agentic_accounts: set[str] = set()
         self.known_tools: set[str] = set()
+        self.tool_schemas: dict[str, dict[str, Any]] = {}
         self.report: dict[str, Any] | None = None
         self.trace: list[dict[str, Any]] = []
 
@@ -303,6 +342,9 @@ class Agent:
         return f"Unknown local tool {name}"
 
     def _call(self, name: str, arguments: dict[str, Any]) -> str:
+        if not isinstance(arguments, dict):
+            arguments = {}
+        arguments = filter_tool_arguments(arguments, self.tool_schemas.get(name))
         arguments = _coerce_order_args(name, arguments)
         if (
             self.idempotency_day
@@ -323,15 +365,18 @@ class Agent:
         elif self.known_tools and name not in self.known_tools:
             text = f"Unknown tool {name}. Use only the tools from this run."
         else:
-            result = self.mcp.call_tool(name, arguments)
-            text = tool_result_text(result)
-            if name == "get_accounts":
+            try:
+                result = self.mcp.call_tool(name, arguments)
+                text = tool_result_text(result)
+            except McpError as exc:
+                text = f"TOOL ERROR: {exc}"
+            if name == "get_accounts" and not text.startswith("TOOL ERROR:"):
                 found = extract_agentic_accounts(text)
                 if found:
                     self.agentic_accounts = found
                     print(f"[accounts] agentic account(s): {', '.join(sorted(found))}", flush=True)
-        if len(text) > 4000:
-            text = text[:4000] + "\n…[truncated]"
+        if len(text) > 2500:
+            text = text[:2500] + "\n…[truncated]"
         self.trace.append({
             "tool": name,
             "arguments": arguments,
@@ -349,9 +394,12 @@ class Agent:
         self.mcp.initialize()
         remote_tools = self._select_tools(self.mcp.list_tools())
         extra = LOCAL_TOOLS if self.enable_report else []
-        self.known_tools = {str(tool["name"]) for tool in remote_tools}
-        if self.enable_report:
-            self.known_tools.add("write_run_report")
+        self.tool_schemas = {
+            str(tool["name"]): tool.get("inputSchema") or {"type": "object", "properties": {}}
+            for tool in list(remote_tools) + list(extra)
+            if tool.get("name")
+        }
+        self.known_tools = set(self.tool_schemas)
         tools = ollama_tools(remote_tools, extra)
         print(f"Tools in this run: {len(tools)}", flush=True)
 
@@ -361,14 +409,14 @@ class Agent:
         ]
         final = ""
         for round_index in range(1, config.MAX_TOOL_ROUNDS + 1):
-            message = _chat(messages, tools)
+            message = _chat(messages, tools, round_index=round_index)
             messages.append(message)
             calls = extract_tool_calls(message)
             if not calls:
                 final = strip_think(message.get("content") or "")
                 print(f"\n{final}", flush=True)
                 break
-            print(f"[round {round_index}] {len(calls)} tool call(s)", flush=True)
+            print(f"[round {round_index}] calling {len(calls)} Robinhood tool(s)…", flush=True)
             for name, arguments in calls:
                 messages.append({
                     "role": "tool",

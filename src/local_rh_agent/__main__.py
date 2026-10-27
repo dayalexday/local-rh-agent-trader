@@ -52,9 +52,10 @@ def cmd_tools() -> int:
     return 0
 
 
-def cmd_run(prompt: str) -> int:
+def cmd_run(prompt: str, *, all_tools: bool) -> int:
+    allowlist = None if all_tools else config.MONTHLY_TOOLS
     with RobinhoodMcp() as mcp:
-        Agent(mcp).run(prompt)
+        Agent(mcp, tool_allowlist=allowlist).run(prompt)
     return 0
 
 
@@ -68,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
 
     run_parser = sub.add_parser("run", help="One agent turn")
     run_parser.add_argument("prompt", nargs="+")
+    run_parser.add_argument(
+        "--all-tools",
+        action="store_true",
+        help="Expose every Robinhood MCP tool (slow on 8GB). Default is a short equity set.",
+    )
 
     monthly_parser = sub.add_parser("monthly", help="First-open-Monday momentum rebalance")
     monthly_parser.add_argument("--force", action="store_true", help="Skip the calendar gate")
@@ -86,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "tools":
         return cmd_tools()
     if args.cmd == "run":
-        return cmd_run(" ".join(args.prompt))
+        return cmd_run(" ".join(args.prompt), all_tools=args.all_tools)
     if args.cmd == "rank":
         from .rank import rank_month
 
