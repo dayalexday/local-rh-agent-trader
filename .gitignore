@@ -8,5 +8,7 @@ __pycache__/
 sp500.csv
 runs/*
 !runs/.gitkeep
+memory/*
+!memory/.gitkeep
 *.egg-info/
 .pytest_cache/

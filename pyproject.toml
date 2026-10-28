@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-rh-agent"
-version = "0.1.0"
-description = "Local Ollama agent wired to Robinhood Trading MCP"
+version = "0.2.0"
+description = "Local multi-agent momentum book with a guarded Robinhood executor"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,10 +15,18 @@ dependencies = [
   "pandas>=2.0",
   "lxml>=4.9",
   "requests>=2.31",
+  "matplotlib>=3.8",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
 
 [project.scripts]
 local-rh-agent = "local_rh_agent.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

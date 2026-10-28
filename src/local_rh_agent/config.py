@@ -25,7 +25,36 @@ TOKEN_PATH = TOKENS_DIR / "rh_mcp.json"
 PROMPTS_DIR = ROOT / "prompts"
 RUNS_DIR = ROOT / "runs"
 VEHICLES_PATH = ROOT / "vehicles.json"
+SECTORS_PATH = ROOT / "sectors.json"
 SP500_CACHE = ROOT / "sp500.csv"
+MEMORY_DIR = ROOT / "memory"
+LESSONS_PATH = MEMORY_DIR / "lessons.jsonl"
+DECISIONS_PATH = MEMORY_DIR / "decisions.jsonl"
+
+
+def env_str(name: str, default: str) -> str:
+    """Read env at call time so tests and CLI flags can override .env."""
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip()
+
+
+def env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return float(raw)
+
+
+def provider_name(role: str | None = None) -> str:
+    """Backend for one agent. A role-specific *_PROVIDER wins over MODEL_PROVIDER."""
+    if role:
+        specific = os.getenv(f"{role.upper()}_PROVIDER")
+        if specific and specific.strip():
+            return specific.strip().lower()
+    return env_str("MODEL_PROVIDER", "ollama").lower()
+
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 # qwen2.5:3b is the default because it is already pulled and returns tool calls
